@@ -1,55 +1,53 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
-const got = require('got');  // Correctly import got for v11.x and above
+const got = require('got');
 
 const token = process.env.BOT_TOKEN;
 const bot = new TelegramBot(token, { polling: true });
 
-// Handle /start command
 bot.onText(/\/start/, (msg) => {
-  bot.sendMessage(msg.chat.id, 'Hey! 👋 Send me a Pinterest video link, and I’ll try to fetch it.');
+  bot.sendMessage(msg.chat.id, "👋 Hi! Send me a Pinterest video link and I'll try to download it for you.");
 });
 
-// Listen to all messages
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  if (!text || text.startsWith('/start')) return;
+  if (text.startsWith('/')) return;
 
-  const pinterestRegex = /(https?:\/\/)?(www\.)?(pinterest\.com|pin\.it)\/[^\s]+/;
+  if (text.includes("pin.it") || text.includes("pinterest.com")) {
+    bot.sendMessage(chatId, "📎 Got a Pinterest link, fetching video...");
 
-  if (pinterestRegex.test(text)) {
-    bot.sendMessage(chatId, '📦 Got a Pinterest link! Fetching video...');
+    const videoUrl = await fetchPinterestVideo(text);
 
-    // If it's a short pin.it link, follow the redirection
-    if (text.includes('pin.it')) {
-      try {
-        // Use got to handle redirection, but make sure we are using the latest syntax
-        const response = await got(text, {
-          method: 'GET',
-          followRedirect: true, // Automatically follow redirects
-          maxRedirects: 5,      // Limit redirects to 5
-        });
+    if (videoUrl) {
+      bot.sendMessage(chatId, "📽️ Found the video! Sending it now...");
 
-        // The full URL after redirection
-        bot.sendMessage(chatId, '🔄 Redirect complete! Extracting the video now...');
-        const fullUrl = response.url;
-        console.log('Final URL:', fullUrl); // Log the final URL for debugging
-
-        // Respond to the user
-        bot.sendMessage(chatId, '💡 Now extracting the video...');
-
-      } catch (error) {
-        console.error('Error while fetching Pinterest URL:', error.message);
-        bot.sendMessage(chatId, `❌ Failed to fetch the full URL. Error: ${error.message}`);
-      }
+      bot.sendVideo(chatId, videoUrl).catch(err => {
+        bot.sendMessage(chatId, "⚠️ Error sending video. It might be too large.");
+        console.error("Telegram send error:", err.message);
+      });
     } else {
-      bot.sendMessage(chatId, '✅ This is already a full Pinterest link! Extracting video...');
-      console.log('Full URL received:', text);
-      bot.sendMessage(chatId, '💡 Now extracting the video...');
+      bot.sendMessage(chatId, "❌ Couldn't find a video on that link.");
     }
-  } else {
-    bot.sendMessage(chatId, '🤔 I only understand Pinterest links for now. Try sending one!');
   }
 });
+
+async function fetchPinterestVideo(url) {
+  try {
+    const response = await got(url, {
+      timeout: { request: 15000 },
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36'
+      }
+    });
+
+    const html = response.body;
+    const match = html.match(/"contentUrl":"(https:\/\/[^"]+\.mp4)"/);
+
+    return match ? match[1] : null;
+  } catch (error) {
+    console.error("Error fetching Pinterest video:", error.message);
+    return null;
+  }
+}
