@@ -1,6 +1,12 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const got = require('got');
+const fs = require('fs');
+const path = require('path');
+const fetch = require('node-fetch');
+const { pipeline } = require('stream');
+const { promisify } = require('util');
+const streamPipeline = promisify(pipeline);
 
 const token = process.env.BOT_TOKEN;
 const bot = new TelegramBot(token, { polling: true });
@@ -13,7 +19,7 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  if (text.startsWith('/')) return;
+  if (!text || text.startsWith('/')) return;
 
   if (text.includes("pin.it") || text.includes("pinterest.com")) {
     bot.sendMessage(chatId, "📎 Got a Pinterest link, fetching video...");
@@ -21,12 +27,31 @@ bot.on('message', async (msg) => {
     const videoUrl = await fetchPinterestVideo(text);
 
     if (videoUrl) {
-      bot.sendMessage(chatId, "📽️ Found the video! Sending it now...");
+      const tempFileName = `video_${Date.now()}.mp4`;
+      const tempFilePath = path.join(__dirname, tempFileName);
 
-      bot.sendVideo(chatId, videoUrl).catch(err => {
-        bot.sendMessage(chatId, "⚠️ Error sending video. It might be too large.");
-        console.error("Telegram send error:", err.message);
-      });
+      try {
+        const response = await fetch(videoUrl);
+        if (!response.ok) throw new Error(`Download failed: ${response.statusText}`);
+
+        await streamPipeline(response.body, fs.createWriteStream(tempFilePath));
+
+        // Check file size before sending (Telegram has size limits)
+        const fileSizeInMB = fs.statSync(tempFilePath).size / (1024 * 1024);
+        if (fileSizeInMB > 50) {
+          bot.sendMessage(chatId, `⚠️ The video is too large to send on Telegram (>${fileSizeInMB.toFixed(2)} MB).`);
+          fs.unlinkSync(tempFilePath);
+          return;
+        }
+
+        await bot.sendVideo(chatId, tempFilePath);
+      } catch (err) {
+        bot.sendMessage(chatId, "⚠️ Failed to download or send the video.");
+        console.error("Error:", err.message);
+      } finally {
+        // Clean up
+        if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+      }
     } else {
       bot.sendMessage(chatId, "❌ Couldn't find a video on that link.");
     }
