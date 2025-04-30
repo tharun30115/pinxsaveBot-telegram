@@ -4,7 +4,7 @@ const { Telegraf } = require('telegraf');
 const got = require('got');
 require('dotenv').config();
 
-// Initialize Telegram Bot with token from .env
+// Initialize Bot with token from .env
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // Function to handle video download and deletion
